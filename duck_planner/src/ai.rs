@@ -1,4 +1,5 @@
-//! Assistant IA de planification avec gestion des priorités et des transports publics.
+//! Assistant IA de planification (propulsé par Groq / Llama 3.3 70B)
+//! avec gestion des priorités et des transports publics.
 
 use crate::ics::CourseEvent;
 use crate::models::{AppConfig, CustomTask, RepeatMode, TaskColor, TaskPriority};
@@ -21,9 +22,7 @@ pub struct AiTaskItem {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AiCancelItem {
-    /// Identifiant exact de la tâche existante à décaler/annuler ce jour-là
     pub task_id: String,
-    /// Date ("YYYY-MM-DD") où cette tâche doit être retirée
     pub date: String,
 }
 
@@ -36,7 +35,7 @@ pub struct AiPlanActions {
     pub new_tasks: Vec<AiTaskItem>,
 }
 
-/// Appelle l'API Gemini en lui fournissant les cours (P4 fixes), les trajets CFF/CarPostal
+/// Appelle l'API Groq en lui fournissant les cours (P4 fixes), les trajets CFF/CarPostal
 /// et les tâches existantes avec leur niveau de priorité (P1 à P4).
 pub fn ask_ai_planner(
     config: &AppConfig,
@@ -45,8 +44,8 @@ pub fn ask_ai_planner(
     all_courses: &[CourseEvent],
     current_tasks: &[CustomTask],
 ) -> Result<AiPlanActions, String> {
-    if config.gemini_api_key.trim().is_empty() {
-        return Err("Ajoute ta clé 'gemini_api_key' dans config.json pour activer l'IA.".into());
+    if config.gemini_api_key.trim().is_empty() || config.gemini_api_key.contains("METS_TA_CLE") {
+        return Err("Colle ta clé Groq (gsk_...) dans 'gemini_api_key' de config.json.".into());
     }
 
     // 1. Disponibilités après cours et transport en commun sur 7 jours
@@ -118,27 +117,33 @@ pub fn ask_ai_planner(
         user_prompt
     );
 
-    let url = format!(
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={}",
-        config.gemini_api_key.trim()
-    );
+    let url = "https://api.groq.com/openai/v1/chat/completions";
 
     let body = serde_json::json!({
-        "contents": [{ "parts": [{ "text": system_prompt }] }],
-        "generationConfig": {
-            "responseMimeType": "application/json"
-        }
+        "model": "llama-3.3-70b-versatile",
+        "messages": [
+            { "role": "user", "content": system_prompt }
+        ],
+        "response_format": { "type": "json_object" }
     });
 
-    let resp = ureq::post(&url)
-        .send_json(body)
-        .map_err(|e| format!("Erreur réseau API IA : {}", e))?;
+    let resp = ureq::post(url)
+        .set(
+            "Authorization",
+            &format!("Bearer {}", config.gemini_api_key.trim()),
+        )
+        .set("Content-Type", "application/json")
+        .send_string(&body.to_string())
+        .map_err(|e| format!("Erreur réseau API Groq : {}", e))?;
 
-    let json_val: serde_json::Value = resp
-        .into_json()
-        .map_err(|e| format!("Erreur lecture JSON : {}", e))?;
+    let raw_resp = resp
+        .into_string()
+        .map_err(|e| format!("Erreur lecture réponse : {}", e))?;
 
-    let raw_text = json_val["candidates"][0]["content"]["parts"][0]["text"]
+    let json_val: serde_json::Value =
+        serde_json::from_str(&raw_resp).map_err(|e| format!("Erreur parsing JSON : {}", e))?;
+
+    let raw_text = json_val["choices"][0]["message"]["content"]
         .as_str()
         .ok_or("Réponse vide de l'IA")?;
 
@@ -148,7 +153,6 @@ pub fn ask_ai_planner(
 
 /// Applique les annulations/décalages et ajoute les nouvelles tâches dans `save.custom_tasks`
 pub fn apply_ai_actions(actions: &AiPlanActions, tasks: &mut Vec<CustomTask>) {
-    // 1. Annule les occurrences déplacées ou annulées (uniquement si priorité < Fixed)
     for cancel in &actions.cancel_occurrences {
         if let Some(t) = tasks.iter_mut().find(|t| t.id == cancel.task_id) {
             if t.priority != TaskPriority::Fixed && !t.skipped_dates.contains(&cancel.date) {
@@ -157,7 +161,6 @@ pub fn apply_ai_actions(actions: &AiPlanActions, tasks: &mut Vec<CustomTask>) {
         }
     }
 
-    // 2. Ajoute les nouvelles tâches (y compris les séances décalées à un autre créneau)
     let base_ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis())
