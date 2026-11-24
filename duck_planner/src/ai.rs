@@ -1,4 +1,4 @@
-//! Assistant IA de planification (propulsé par Groq / Llama 3.3 70B)
+//! Assistant IA de planification (propulsé par Groq / openai/gpt-oss-120b)
 //! avec gestion des priorités et des transports publics.
 
 use crate::ics::CourseEvent;
@@ -48,7 +48,7 @@ pub fn ask_ai_planner(
         return Err("Colle ta clé Groq (gsk_...) dans 'gemini_api_key' de config.json.".into());
     }
 
-    // 1. Disponibilités après cours et transport en commun sur 7 jours
+    // 1. Disponibilités (matin et soir) après cours et transport en commun sur 7 jours
     let availability = build_week_availability_summary(all_courses, today, config);
 
     // 2. Liste détaillée des tâches existantes sur les 7 prochains jours avec leur ID et priorité
@@ -75,16 +75,18 @@ pub fn ask_ai_planner(
     let system_prompt = format!(
         "Tu es un assistant d'agenda intelligent.\n\
         Date d'aujourd'hui : {} ({}).\n\n\
-        RÈGLES DE PRIORITÉ STRICTES (A RESPECTER IMPÉRATIVEMENT) :\n\
+        RÈGLES DE PRIORITÉ STRICTES (À RESPECTER IMPÉRATIVEMENT) :\n\
         - Niveau 4 (Fixe) : Les COURS universitaires sont intouchables. Tu ne peux JAMAIS les déplacer ni les supprimer.\n\
         - Niveau 3 (Haute) : Rendez-vous médical, examen, impératif. Si l'utilisateur ajoute un RDV médical ou un impératif qui chevauche une tâche de niveau 1 ou 2, tu DOIS annuler l'occurrence de cette tâche via `cancel_occurrences` (avec son `task_id` et la `date`) et la replanifier plus tard dans la soirée (après le RDV, avant 21h30) ou un autre jour libre dans `new_tasks`.\n\
         - Niveau 2 (Moyenne) : Soins des cheveux / douche. Déplacé uniquement si conflit avec niveau 3 ou 4.\n\
         - Niveau 1 (Flexible) : Sport (vélo d'appartement, muscu haut du corps), loisirs. Déplacé/annulé en premier dès qu'il y a un RDV médical (niveau 3) ou une soirée/fête.\n\n\
         RÈGLES SPORT, CHEVEUX & TRANSPORTS :\n\
         1. Sport (perte de poids) : Vélo d'appartement (cardio/fractionné doux) + renforcement haut du corps / gainage. INTERDICTION TOTALE de course à pied, sauts ou exercices lourds sur les genoux.\n\
-        2. Soin cheveux : 3 lavages/soins espacés dans la semaine (ex: dimanche soir, mercredi, vendredi).\n\
-        3. Transports : Ne place JAMAIS d'activité à la maison avant l'heure d'arrivée en transport indiquée ci-dessous.\n\n\
-        COURS (NIVEAU 4 FIXE) & HEURES D'ARRIVÉE MAISON SUR 7 JOURS :\n{}\n\
+        2. Soin cheveux : Respecte scrupuleusement la routine demandée (lavages complets, refresh matin, et co-wash le mercredi matin si MATIN LIBRE sinon le mercredi soir).\n\
+        3. Transports : Ne place JAMAIS d'activité à la maison avant l'heure d'arrivée en transport le soir, ni après l'heure de départ indiquée le matin.\n\n\
+        RÈGLE DE COMPLÉTUDE OBLIGATOIRE :\n\
+        Si l'utilisateur demande un planning hebdomadaire ou sur 7 jours, tu DOIS impérativement générer les tâches pour CHACUN des 7 jours listés ci-dessous (du jour 1 au jour 7, soit environ 10 à 12 tâches au total dans `new_tasks`). Ne t'arrête JAMAIS après 2 jours.\n\n\
+        COURS (NIVEAU 4 FIXE) & CRÉNEAUX LIBRES MAISON SUR 7 JOURS :\n{}\n\
         TÂCHES PERSONNALISÉES DÉJÀ PLANIFIÉES SUR 7 JOURS :\n{}\n\
         DEMANDE DE L'UTILISATEUR : \"{}\"\n\n\
         Réponds UNIQUEMENT en JSON valide selon ce schéma exact :\n\
@@ -95,13 +97,13 @@ pub fn ask_ai_planner(
           ],\n\
           \"new_tasks\": [\n\
             {{\n\
-              \"title\": \"Rendez-vous médical\",\n\
+              \"title\": \"Cheveux : Lavage complet (Syoss + Clere + Pantene)\",\n\
               \"date\": \"YYYY-MM-DD\",\n\
               \"start_hour\": 18,\n\
-              \"start_minute\": 0,\n\
-              \"duration_minutes\": 60,\n\
-              \"category\": \"medical\",\n\
-              \"priority_level\": 3,\n\
+              \"start_minute\": 30,\n\
+              \"duration_minutes\": 30,\n\
+              \"category\": \"soin\",\n\
+              \"priority_level\": 2,\n\
               \"repeat_weeks\": 1\n\
             }}\n\
           ]\n\
@@ -120,21 +122,36 @@ pub fn ask_ai_planner(
     let url = "https://api.groq.com/openai/v1/chat/completions";
 
     let body = serde_json::json!({
-        "model": "llama-3.3-70b-versatile",
+        "model": "openai/gpt-oss-120b",
+        "temperature": 0.2,
+        "max_tokens": 4096,
         "messages": [
-            { "role": "user", "content": system_prompt }
-        ],
-        "response_format": { "type": "json_object" }
+            {
+                "role": "system",
+                "content": "Tu réponds uniquement avec un objet JSON valide, sans texte ni balises markdown autour. Tu dois générer l'intégralité des tâches demandées sur tous les jours demandés."
+            },
+            {
+                "role": "user",
+                "content": system_prompt
+            }
+        ]
     });
 
-    let resp = ureq::post(url)
+    let resp = match ureq::post(url)
         .set(
             "Authorization",
             &format!("Bearer {}", config.gemini_api_key.trim()),
         )
         .set("Content-Type", "application/json")
         .send_string(&body.to_string())
-        .map_err(|e| format!("Erreur réseau API Groq : {}", e))?;
+    {
+        Ok(r) => r,
+        Err(ureq::Error::Status(code, response)) => {
+            let err_body = response.into_string().unwrap_or_default();
+            return Err(format!("Erreur Groq HTTP {} : {}", code, err_body));
+        }
+        Err(e) => return Err(format!("Erreur réseau API Groq : {}", e)),
+    };
 
     let raw_resp = resp
         .into_string()
@@ -147,8 +164,16 @@ pub fn ask_ai_planner(
         .as_str()
         .ok_or("Réponse vide de l'IA")?;
 
-    serde_json::from_str::<AiPlanActions>(raw_text)
-        .map_err(|e| format!("JSON invalide : {} (brut: {})", e, raw_text))
+    // Nettoie les éventuelles balises ```json ... ```
+    let clean_json = raw_text
+        .trim()
+        .trim_start_matches("```json")
+        .trim_start_matches("```")
+        .trim_end_matches("```")
+        .trim();
+
+    serde_json::from_str::<AiPlanActions>(clean_json)
+        .map_err(|e| format!("JSON invalide : {} (brut: {})", e, clean_json))
 }
 
 /// Applique les annulations/décalages et ajoute les nouvelles tâches dans `save.custom_tasks`

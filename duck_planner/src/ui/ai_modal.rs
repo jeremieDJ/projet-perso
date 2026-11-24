@@ -45,7 +45,8 @@ pub fn render_ai_modal(app: &mut DuckApp, ctx: &egui::Context) {
                 .inner_margin(18.0),
         )
         .show(ctx, |ui| {
-            ui.set_min_width(350.0);
+            ui.set_min_width(420.0);
+            ui.set_max_width(420.0);
 
             ui.label(
                 egui::RichText::new("Que veux-tu planifier ou adapter ?")
@@ -58,7 +59,18 @@ pub fn render_ai_modal(app: &mut DuckApp, ctx: &egui::Context) {
             // Raccourcis en 1 clic pour tes cas fréquents
             ui.horizontal_wrapped(|ui| {
                 if ui.small_button("🚴 Programme Sport + Cheveux").clicked() {
-                    app.ai_prompt = "Crée-moi un programme sur 4 semaines : sport perte de poids (vélo d'appartement + haut du corps, sans impact sur les genoux) et 3 soins/lavages cheveux par semaine après mes cours et mon trajet retour.".to_string();
+                    app.ai_prompt = "Annule toutes mes tâches IA existantes via cancel_occurrences, puis génère mon planning complet pour CHACUN des 7 jours (repeat_weeks: 1) en respectant strictement mes cours et trajets :\n\n\
+1. ROUTINE CHEVEUX LONGS (catégorie \"soin\", priorité 2) :\n\
+- Dimanche soir (18h30) : Cheveux : Lavage complet (Syoss racines + Clere longueurs + Pantene) (30 min)\n\
+- Lundi, Mardi, Jeudi, Samedi matin (avant départ) : Cheveux : Refresh (Eau + noisette de Pantene) (15 min)\n\
+- Mercredi : Si j'ai MATIN LIBRE (cours l'après-midi ou pas de cours), place Cheveux : Co-wash (Clere seul + Pantene) (30 min) le MATIN avant départ. Sinon, place-le le SOIR tôt après retour.\n\
+- Vendredi soir (tôt, après retour) : Cheveux : Lavage complet (Syoss racines + Clere longueurs + Pantene) (30 min)\n\n\
+2. SPORT PERTE DE POIDS (catégorie \"sport\", priorité 1 — 25 ans, 1m85, 120 kg, ZÉRO impact genoux) :\n\
+- Lundi soir : Sport : Vélo d'appart Endurance (5 min échauffement + 30 min modéré + 5 min calme) (40 min)\n\
+- Mardi soir : Sport : Mobilité & Étirements (15 min dos, nuque et poignets) (15 min)\n\
+- Mercredi soir : Sport : Vélo d'appart Fractionné assis (5 min échauffement + 8x [30s rapide / 1m15 lent] + 5 min calme) (30 min)\n\
+- Jeudi soir : Sport : Haut du corps & Gainage (3 tours : 10 pompes inclinées + 10 dips chaise + 30s planche) (25 min)\n\
+- Samedi matin : Sport : Vélo d'appart Cardio long (45 min endurance douce + étirements bras/dos) (45 min)".to_string();
                 }
                 if ui.small_button("🎉 Ce soir je fais la fête").clicked() {
                     app.ai_prompt = "Ce soir je fais la fête, je ne peux rien faire. Annule ou décale mes activités de ce soir.".to_string();
@@ -66,16 +78,27 @@ pub fn render_ai_modal(app: &mut DuckApp, ctx: &egui::Context) {
                 if ui.small_button("🩺 RDV Médical demain 18h").clicked() {
                     app.ai_prompt = "Ajoute un rendez-vous médical (priorité haute) demain à 18h00 pendant 1h et décale le sport s'il y en avait un.".to_string();
                 }
+                if ui.small_button("🗑️ Vider tâches IA").clicked() {
+                    app.save.custom_tasks.retain(|t| !t.id.starts_with("ai_"));
+                    app.save.save();
+                    app.ai_last_reply = "Toutes les tâches générées par l'IA ont été supprimées.".to_string();
+                }
             });
 
             ui.add_space(8.0);
 
-            ui.add(
-                egui::TextEdit::multiline(&mut app.ai_prompt)
-                    .hint_text("Ex: Rajoute un RDV médical jeudi à 17h30 et décale le sport...")
-                    .desired_rows(3)
-                    .desired_width(f32::INFINITY),
-            );
+            // Zone de texte multi-lignes déroulante
+            egui::ScrollArea::vertical()
+                .id_salt("ai_prompt_scroll")
+                .max_height(140.0)
+                .show(ui, |ui| {
+                    ui.add(
+                        egui::TextEdit::multiline(&mut app.ai_prompt)
+                            .hint_text("Ex: Rajoute un RDV médical jeudi à 17h30 et décale le sport...")
+                            .desired_rows(4)
+                            .desired_width(f32::INFINITY),
+                    );
+                });
 
             ui.add_space(10.0);
 
@@ -129,11 +152,16 @@ pub fn render_ai_modal(app: &mut DuckApp, ctx: &egui::Context) {
                     .rounding(8.0)
                     .inner_margin(10.0)
                     .show(ui, |ui| {
-                        ui.label(
-                            egui::RichText::new(&app.ai_last_reply)
-                                .size(12.0)
-                                .color(Palette::TEXT_PRIMARY),
-                        );
+                        egui::ScrollArea::vertical()
+                            .id_salt("ai_reply_scroll")
+                            .max_height(100.0)
+                            .show(ui, |ui| {
+                                ui.label(
+                                    egui::RichText::new(&app.ai_last_reply)
+                                        .size(12.0)
+                                        .color(Palette::TEXT_PRIMARY),
+                                );
+                            });
                     });
             }
         });
