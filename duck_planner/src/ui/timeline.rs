@@ -1,9 +1,9 @@
 //! Vue "Chronologie" : affiche l'emploi du temps vertical de 07h00 à 22h00,
-//! permet d'ajouter une tâche par clic droit et de la supprimer par clic gauche.
+//! permet d'ajouter une tâche (avec priorité) par clic droit et de la supprimer par clic gauche.
 
 use crate::app::DuckApp;
 use crate::ics::CourseEvent;
-use crate::models::{CustomTask, RepeatMode, TaskColor};
+use crate::models::{CustomTask, RepeatMode, TaskColor, TaskPriority};
 use crate::theme::{clean_course_label, Palette};
 use chrono::{DateTime, Local, Timelike};
 use eframe::egui;
@@ -113,6 +113,7 @@ pub fn render_timeline(
                             app.new_task.start_hour = h;
                             app.new_task.start_minute = m;
                             app.new_task.duration_minutes = 60;
+                            app.new_task.priority = TaskPriority::Flexible;
                             app.new_task.repeat_mode = RepeatMode::Once;
                             app.new_task.repeat_count = 1;
                         }
@@ -188,7 +189,7 @@ pub fn render_timeline(
                         }
                     }
 
-                    // 5. Blocs des tâches personnalisées
+                    // 5. Blocs des tâches personnalisées (avec badge de priorité)
                     for task in &app.save.custom_tasks {
                         if task.occurs_on(app.selected_date) {
                             let s_h = task.start_hour as f32 + task.start_minute as f32 / 60.0;
@@ -202,7 +203,8 @@ pub fn render_timeline(
                                 let y2 =
                                     tl_rect.top() + (e_h - start_hour as f32) * app.timeline_zoom;
                                 let lbl = format!(
-                                    "{:02}:{:02} • {} ({} min)  🗑",
+                                    "[{}] {:02}:{:02} • {} ({} min)",
+                                    task.priority.badge(),
                                     task.start_hour,
                                     task.start_minute,
                                     task.title,
@@ -278,7 +280,7 @@ fn render_delete_task_modal(app: &mut DuckApp, ctx: &egui::Context) {
         .frame(
             egui::Frame::window(&ctx.style())
                 .fill(Palette::BG_CARD)
-                .stroke(egui::Stroke::new(1.5, Palette::RED_SPORT))
+                .stroke(egui::Stroke::new(1.5_f32, Palette::RED_SPORT))
                 .rounding(12.0)
                 .inner_margin(16.0),
         )
@@ -292,7 +294,6 @@ fn render_delete_task_modal(app: &mut DuckApp, ctx: &egui::Context) {
             ui.add_space(12.0);
 
             if is_recurring {
-                // Option 1 : Supprimer uniquement l'occurrence de ce jour
                 if ui
                     .add(
                         egui::Button::new("Uniquement aujourd'hui")
@@ -312,7 +313,6 @@ fn render_delete_task_modal(app: &mut DuckApp, ctx: &egui::Context) {
 
                 ui.add_space(6.0);
 
-                // Option 2 : Supprimer toute la série récurrente
                 if ui
                     .add(
                         egui::Button::new(
@@ -332,7 +332,6 @@ fn render_delete_task_modal(app: &mut DuckApp, ctx: &egui::Context) {
                     app.task_to_delete = None;
                 }
             } else {
-                // Activité unique : suppression directe
                 ui.horizontal(|ui| {
                     if ui
                         .add(
@@ -384,7 +383,7 @@ fn render_new_task_modal(app: &mut DuckApp, ctx: &egui::Context) {
                 .inner_margin(18.0),
         )
         .show(ctx, |ui| {
-            ui.set_min_width(330.0);
+            ui.set_min_width(340.0);
 
             // --- 1. NOM DE L'ACTIVITÉ ---
             ui.label(
@@ -395,7 +394,7 @@ fn render_new_task_modal(app: &mut DuckApp, ctx: &egui::Context) {
             ui.add_space(3.0);
             ui.add(
                 egui::TextEdit::singleline(&mut app.new_task.title)
-                    .hint_text("Ex: Vélo d'appart, Banjo, Révision...")
+                    .hint_text("Ex: Vélo d'appart, RDV Médical, Banjo...")
                     .margin(egui::Margin::symmetric(10.0, 7.0))
                     .desired_width(f32::INFINITY),
             );
@@ -407,7 +406,6 @@ fn render_new_task_modal(app: &mut DuckApp, ctx: &egui::Context) {
                 .num_columns(2)
                 .spacing([14.0, 10.0])
                 .show(ui, |ui| {
-                    // Ligne 1 : Début dans un seul bloc unifié [ 18 : 30 ]
                     ui.label(
                         egui::RichText::new("Début")
                             .size(12.5)
@@ -442,7 +440,6 @@ fn render_new_task_modal(app: &mut DuckApp, ctx: &egui::Context) {
                         });
                     ui.end_row();
 
-                    // Ligne 2 : Durée (valeur manuelle mise en avant + pilules presets)
                     ui.label(
                         egui::RichText::new("Durée")
                             .size(12.5)
@@ -450,7 +447,6 @@ fn render_new_task_modal(app: &mut DuckApp, ctx: &egui::Context) {
                     );
 
                     ui.horizontal(|ui| {
-                        // Boîte principale pour la saisie manuelle
                         egui::Frame::none()
                             .fill(Palette::BG_MAIN)
                             .stroke(egui::Stroke::new(1.0_f32, Palette::GOLD_ACCENT))
@@ -467,7 +463,6 @@ fn render_new_task_modal(app: &mut DuckApp, ctx: &egui::Context) {
 
                         ui.add_space(4.0);
 
-                        // Petits boutons presets bien distincts visuellement
                         ui.spacing_mut().item_spacing.x = 4.0;
                         for preset in [30, 45, 60, 90] {
                             let is_active = app.new_task.duration_minutes == preset;
@@ -503,7 +498,7 @@ fn render_new_task_modal(app: &mut DuckApp, ctx: &egui::Context) {
 
             ui.add_space(12.0);
 
-            // --- 3. CATÉGORIE / COULEUR (PILULES SANS CARRÉS NI RONDS ASCII) ---
+            // --- 3. CATÉGORIE / COULEUR ---
             ui.label(
                 egui::RichText::new("Catégorie")
                     .size(12.0)
@@ -556,13 +551,83 @@ fn render_new_task_modal(app: &mut DuckApp, ctx: &egui::Context) {
 
                     if ui.add(btn).clicked() {
                         app.new_task.color = col;
+                        // Ajuste automatiquement une priorité cohérente selon la catégorie choisie
+                        app.new_task.priority = match col {
+                            TaskColor::RedSport | TaskColor::PurpleOther => TaskPriority::Flexible,
+                            TaskColor::GreenCare => TaskPriority::Medium,
+                            TaskColor::GoldPerso => TaskPriority::High,
+                            TaskColor::BlueStudy => TaskPriority::Fixed,
+                        };
                     }
                 }
             });
 
             ui.add_space(12.0);
 
-            // --- 4. RÉPÉTITION (BOUTONS SEGMENTS PROPRES) ---
+            // --- 4. PRIORITÉ (POUR L'IA & LES DÉCALAGES) ---
+            ui.label(
+                egui::RichText::new("Priorité")
+                    .size(12.0)
+                    .color(Palette::TEXT_MUTED),
+            );
+            ui.add_space(4.0);
+
+            let priorities = [
+                (TaskPriority::Flexible, "P1 Flexible"),
+                (TaskPriority::Medium, "P2 Moyenne"),
+                (TaskPriority::High, "P3 Haute"),
+                (TaskPriority::Fixed, "P4 Fixe"),
+            ];
+
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                for (prio, short_lbl) in priorities {
+                    let selected = app.new_task.priority == prio;
+                    let prio_col = match prio {
+                        TaskPriority::Flexible => Palette::GREEN_ACCENT,
+                        TaskPriority::Medium => Palette::GOLD_ACCENT,
+                        TaskPriority::High => Palette::CORAL_NOW,
+                        TaskPriority::Fixed => Palette::RED_SPORT,
+                    };
+                    let fill = if selected {
+                        egui::Color32::from_rgba_unmultiplied(
+                            prio_col.r(),
+                            prio_col.g(),
+                            prio_col.b(),
+                            50,
+                        )
+                    } else {
+                        Palette::BG_MAIN
+                    };
+                    let stroke = if selected {
+                        egui::Stroke::new(1.3_f32, prio_col)
+                    } else {
+                        egui::Stroke::new(1.0_f32, Palette::BORDER)
+                    };
+
+                    if ui
+                        .add(
+                            egui::Button::new(egui::RichText::new(short_lbl).size(11.5).color(
+                                if selected {
+                                    Palette::TEXT_PRIMARY
+                                } else {
+                                    prio_col
+                                },
+                            ))
+                            .fill(fill)
+                            .stroke(stroke)
+                            .rounding(8.0),
+                        )
+                        .clicked()
+                    {
+                        app.new_task.priority = prio;
+                    }
+                }
+            });
+
+            ui.add_space(12.0);
+
+            // --- 5. RÉPÉTITION ---
             ui.label(
                 egui::RichText::new("Répétition")
                     .size(12.0)
@@ -630,7 +695,7 @@ fn render_new_task_modal(app: &mut DuckApp, ctx: &egui::Context) {
             ui.separator();
             ui.add_space(8.0);
 
-            // --- 5. BOUTONS D'ACTION ---
+            // --- 6. BOUTONS D'ACTION ---
             ui.horizontal(|ui| {
                 if ui
                     .add(
@@ -666,6 +731,7 @@ fn render_new_task_modal(app: &mut DuckApp, ctx: &egui::Context) {
                         start_minute: app.new_task.start_minute,
                         duration_minutes: app.new_task.duration_minutes,
                         color: app.new_task.color,
+                        priority: app.new_task.priority,
                         repeat_mode: app.new_task.repeat_mode,
                         repeat_count: if app.new_task.repeat_mode == RepeatMode::Once {
                             1

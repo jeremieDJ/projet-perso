@@ -1,12 +1,14 @@
 //! État central de l'application (`DuckApp`) et assemblage des vues.
 
+use crate::ai::AiPlanActions;
 use crate::ics::{courses_for_date, fetch_all_courses, CourseEvent};
-use crate::models::{AppConfig, RepeatMode, SaveData, TaskColor};
+use crate::models::{AppConfig, RepeatMode, SaveData, TaskColor, TaskPriority};
 use crate::theme::Palette;
-use crate::ui::{header, tabs, timeline};
+use crate::ui::{ai_modal, header, tabs, timeline};
 use chrono::{Datelike, Days, Local, NaiveDate};
 use eframe::egui;
 use std::fs;
+use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 
 #[derive(PartialEq, Clone, Copy)]
@@ -22,6 +24,7 @@ pub struct NewTaskDraft {
     pub start_hour: u32,
     pub start_minute: u32,
     pub duration_minutes: u32,
+    pub priority: TaskPriority,
     pub color: TaskColor,
     pub repeat_mode: RepeatMode,
     pub repeat_count: u32,
@@ -35,6 +38,7 @@ impl Default for NewTaskDraft {
             start_hour: 12,
             start_minute: 0,
             duration_minutes: 60,
+            priority: TaskPriority::Flexible,
             color: TaskColor::RedSport,
             repeat_mode: RepeatMode::Once,
             repeat_count: 1,
@@ -58,6 +62,12 @@ pub struct DuckApp {
     pub new_task: NewTaskDraft,
     /// Stocke `(id_tache, titre_tache)` lorsqu'on clique gauche sur une activité à supprimer
     pub task_to_delete: Option<(String, String)>,
+    /// État de la fenêtre Coach IA
+    pub ai_modal_open: bool,
+    pub ai_prompt: String,
+    pub ai_loading: bool,
+    pub ai_last_reply: String,
+    pub ai_receiver: Option<Receiver<Result<AiPlanActions, String>>>,
 }
 
 impl DuckApp {
@@ -97,6 +107,11 @@ impl DuckApp {
             last_tick: Instant::now(),
             new_task: NewTaskDraft::default(),
             task_to_delete: None,
+            ai_modal_open: false,
+            ai_prompt: String::new(),
+            ai_loading: false,
+            ai_last_reply: String::new(),
+            ai_receiver: None,
         }
     }
 
@@ -113,8 +128,12 @@ impl DuckApp {
 
     /// Gère les raccourcis clavier (flèches gauche/droite pour changer de jour)
     fn handle_keyboard_navigation(&mut self, ctx: &egui::Context) {
-        // Ne pas changer de jour si l'utilisateur écrit dans un champ texte ou si une modale est ouverte
-        if ctx.wants_keyboard_input() || self.new_task.open || self.task_to_delete.is_some() {
+        // Ne pas changer de jour si l'utilisateur écrit ou si une modale est ouverte
+        if ctx.wants_keyboard_input()
+            || self.new_task.open
+            || self.task_to_delete.is_some()
+            || self.ai_modal_open
+        {
             return;
         }
 
@@ -248,5 +267,8 @@ impl eframe::App for DuckApp {
                 ui.add_space(10.0);
                 header::render_bottom_nav(self, ui);
             });
+
+        // Fenêtre flottante du Coach IA
+        ai_modal::render_ai_modal(self, ctx);
     }
 }

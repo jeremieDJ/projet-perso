@@ -1,5 +1,9 @@
 {
   "ics_url": "https://hes-so.pocketcampus.org/deploy/backend_proxy/14620/untis/raw-isacademia?action=get_ics&key=f4006e3fMYD9cD87Cjmyn0DHAH9Lrn21WtDEBss5",
+  "gemini_api_key": "METS_TA_CLE_API_GEMINI_ICI",
+  "school_station": "Sion, gare",
+  "home_station": "Mollens VS",
+  "walk_to_station_minutes": 10,
   "hair_routine": {
     "Monday": {
       "title": "Lavage complet",

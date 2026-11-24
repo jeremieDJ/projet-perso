@@ -9,6 +9,7 @@ use eframe::egui;
 use std::f32::consts::TAU;
 
 /// Barre tout en haut avec bouton Calendrier cliquable, synchronisation Untis et épingle
+/// Barre tout en haut avec bouton Calendrier cliquable, Coach IA, synchronisation Untis et épingle
 pub fn render_top_bar(app: &mut DuckApp, ctx: &egui::Context, ui: &mut egui::Ui, today: NaiveDate) {
     ui.horizontal(|ui| {
         let cal_label = if app.selected_date == today {
@@ -45,6 +46,7 @@ pub fn render_top_bar(app: &mut DuckApp, ctx: &egui::Context, ui: &mut egui::Ui,
         }
 
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            // 1. Bouton Épingle (Always on Top)
             let pin_col = if app.always_on_top {
                 Palette::CORAL_NOW
             } else {
@@ -64,6 +66,7 @@ pub fn render_top_bar(app: &mut DuckApp, ctx: &egui::Context, ui: &mut egui::Ui,
                 ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(level));
             }
 
+            // 2. Bouton Synchronisation Untis
             if ui
                 .add(
                     egui::Button::new(egui::RichText::new("🔄").color(Palette::TEXT_MUTED))
@@ -74,10 +77,35 @@ pub fn render_top_bar(app: &mut DuckApp, ctx: &egui::Context, ui: &mut egui::Ui,
             {
                 app.all_courses = fetch_all_courses(&app.config.ics_url);
             }
+
+            ui.add_space(4.0);
+
+            // 3. Bouton Coach IA (ouvre la fenêtre de génération/adaptation)
+            let ai_bg = if app.ai_modal_open {
+                egui::Color32::from_rgba_unmultiplied(160, 120, 220, 60)
+            } else {
+                Palette::BG_CARD
+            };
+            if ui
+                .add(
+                    egui::Button::new(
+                        egui::RichText::new("✨ IA")
+                            .size(12.0)
+                            .strong()
+                            .color(Palette::PURPLE_REWARD),
+                    )
+                    .fill(ai_bg)
+                    .stroke(egui::Stroke::new(1.0_f32, Palette::PURPLE_REWARD))
+                    .rounding(8.0),
+                )
+                .on_hover_text("Ouvrir l'assistant planning IA")
+                .clicked()
+            {
+                app.ai_modal_open = !app.ai_modal_open;
+            }
         });
     });
 }
-
 /// Calendrier mensuel dépliable permettant de cliquer sur n'importe quel jour
 pub fn render_calendar_popup(app: &mut DuckApp, ui: &mut egui::Ui, today: NaiveDate) {
     let month_name = match app.calendar_month.month() {

@@ -5,10 +5,12 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 // Déclaration de tous les modules du projet
+mod ai;
 mod app;
 mod ics;
 mod models;
 mod theme;
+mod transport;
 mod ui;
 
 use app::DuckApp;

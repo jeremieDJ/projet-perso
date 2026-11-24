@@ -1,5 +1,5 @@
 //! Modèles de données : configuration externe (`config.json`),
-//! tâches personnalisées récurrentes et sauvegarde locale (`save.json`).
+//! tâches personnalisées avec priorités et sauvegarde locale (`save.json`).
 
 use crate::theme::Palette;
 use chrono::{Datelike, NaiveDate};
@@ -8,14 +8,12 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 
-/// Routine capillaire pour un jour donné de la semaine
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HairDay {
     pub title: String,
     pub products: String,
 }
 
-/// Séance de sport pour un jour donné de la semaine
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SportDay {
     pub title: String,
@@ -23,15 +21,33 @@ pub struct SportDay {
     pub timer_seconds: u64,
 }
 
-/// Configuration globale chargée depuis `config.json`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub ics_url: String,
+    #[serde(default)]
+    pub gemini_api_key: String,
+    #[serde(default = "default_school_station")]
+    pub school_station: String,
+    #[serde(default = "default_home_station")]
+    pub home_station: String,
+    #[serde(default = "default_walk_minutes")]
+    pub walk_to_station_minutes: u32,
+    #[serde(default)]
     pub hair_routine: HashMap<String, HairDay>,
+    #[serde(default)]
     pub sport_routine: HashMap<String, SportDay>,
 }
 
-/// Catégorie / couleur d'une tâche personnalisée
+fn default_school_station() -> String {
+    "Sion, gare".to_string()
+}
+fn default_home_station() -> String {
+    "Mollens VS".to_string()
+}
+fn default_walk_minutes() -> u32 {
+    10
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TaskColor {
     RedSport,
@@ -63,7 +79,36 @@ impl TaskColor {
     }
 }
 
-/// Type de répétition hebdomadaire
+/// Niveau de priorité d'une activité (détermine ce que l'IA a le droit de déplacer)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum TaskPriority {
+    /// Niveau 1 : Sport, loisirs -> décalé en premier si un imprévu arrive
+    Flexible = 1,
+    /// Niveau 2 : Soins cheveux / routines -> déplacé seulement si conflit avec Haute/Fixe
+    Medium = 2,
+    /// Niveau 3 : Rendez-vous médical, impératif -> écrase ou décale les priorités 1 et 2
+    High = 3,
+    /// Niveau 4 : Inamovible (comme les cours) -> ne peut jamais être déplacé
+    Fixed = 4,
+}
+
+impl Default for TaskPriority {
+    fn default() -> Self {
+        TaskPriority::Flexible
+    }
+}
+
+impl TaskPriority {
+    pub fn badge(self) -> &'static str {
+        match self {
+            TaskPriority::Flexible => "P1",
+            TaskPriority::Medium => "P2",
+            TaskPriority::High => "P3!",
+            TaskPriority::Fixed => "FIXE",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RepeatMode {
     Once,
@@ -71,37 +116,24 @@ pub enum RepeatMode {
     EveryTwoWeeks,
 }
 
-impl RepeatMode {
-    pub fn label(self) -> &'static str {
-        match self {
-            RepeatMode::Once => "Une seule fois",
-            RepeatMode::EveryWeek => "Chaque semaine (même jour)",
-            RepeatMode::EveryTwoWeeks => "1 semaine sur 2 (même jour)",
-        }
-    }
-}
-
-// Tâche personnalisée créée par clic droit sur l'emploi du temps
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CustomTask {
     pub id: String,
     pub title: String,
-    /// Date de première occurrence au format "YYYY-MM-DD"
     pub start_date: String,
     pub start_hour: u32,
     pub start_minute: u32,
     pub duration_minutes: u32,
     pub color: TaskColor,
+    #[serde(default)]
+    pub priority: TaskPriority,
     pub repeat_mode: RepeatMode,
-    /// Nombre total d'occurrences (ex: 1 = une fois, 4 = 4 répétitions)
     pub repeat_count: u32,
-    /// Dates spécifiques où cette occurrence a été supprimée ("YYYY-MM-DD")
     #[serde(default)]
     pub skipped_dates: Vec<String>,
 }
 
 impl CustomTask {
-    /// Vérifie si cette tâche tombe à la date `target` selon sa règle de récurrence
     pub fn occurs_on(&self, target: NaiveDate) -> bool {
         let target_str = target.format("%Y-%m-%d").to_string();
         if self.skipped_dates.contains(&target_str) {
@@ -129,13 +161,11 @@ impl CustomTask {
         }
     }
 
-    /// Identifiant unique d'une occurrence précise (ex: "custom_12345_2026-11-23")
     pub fn occurrence_key(&self, date: NaiveDate) -> String {
         format!("{}_{}", self.id, date.format("%Y-%m-%d"))
     }
 }
 
-/// Données de progression et tâches sauvegardées dans `save.json`
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SaveData {
     pub xp: u32,
